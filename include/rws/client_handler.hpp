@@ -16,6 +16,12 @@
 #define RWS__NODE_HPP_
 
 #include <nlohmann/json.hpp>
+#include <thread>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
+#include <functional>
+#include <atomic>
 
 #include "rclcpp/rclcpp.hpp"
 #include "rws/connector.hpp"
@@ -52,6 +58,18 @@ private:
     publisher_cb_;
   std::map<std::string, std::shared_ptr<rws::GenericClient>> clients_;
 
+  // Thread pool for async service calls
+  static const int THREAD_POOL_SIZE = 4;
+  std::vector<std::thread> service_thread_pool_;
+  std::queue<std::function<void()>> service_tasks_;
+  std::mutex service_queue_mutex_;
+  std::condition_variable service_condition_;
+  std::atomic<bool> shutdown_service_threads_;
+
+  void init_service_thread_pool();
+  void shutdown_service_thread_pool();
+  void service_worker_thread();
+
   rclcpp::Logger get_logger()
   {
     return rclcpp::get_logger(std::string("client_handler_") + std::to_string(client_id_));
@@ -71,6 +89,7 @@ private:
   // Service handlers
   bool call_service(const json & request, json & response_out);
   bool call_external_service(const json & request, json & response_out);
+  void process_service_call_async(json request);
 };
 
 }  // namespace rws

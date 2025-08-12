@@ -45,11 +45,13 @@ ClientHandler::ClientHandler(
   connector_(connector),
   rosbridge_compatible_(rosbridge_compatible),
   callback_(callback),
-  binary_callback_(binary_callback)
+  binary_callback_(binary_callback),
+  shutdown_service_threads_(false)
 {
   RCLCPP_INFO(
     get_logger(), "Constructing client %s(%s)", std::to_string(client_id_).c_str(),
     string_thread_id().c_str());
+  init_service_thread_pool();
 }
 
 ClientHandler::~ClientHandler()
@@ -57,6 +59,9 @@ ClientHandler::~ClientHandler()
   RCLCPP_INFO(
     get_logger(), "Destroying client %s(%s)", std::to_string(client_id_).c_str(),
     string_thread_id().c_str());
+  
+  shutdown_service_thread_pool();
+  
   for (auto it = subscriptions_.begin(); it != subscriptions_.end(); ++it) {
     it->second();
   }
@@ -79,7 +84,23 @@ json ClientHandler::process_message(json & msg)
   std::string op = msg["op"];
 
   if (op == "call_service") {
-    handled = call_service(msg, response);
+    // For external service calls, process async to avoid blocking
+    if (msg.contains("service") && msg["service"].is_string()) {
+      std::string service_name = msg["service"];
+      // Check if this is a rosapi service (handled synchronously) or external service
+      if (service_name.find("/rosapi/") != 0) {
+        // External service - process asynchronously
+        process_service_call_async(msg);
+        response["op"] = "call_service";
+        response["result"] = true;
+        handled = true;
+      } else {
+        // Rosapi service - process synchronously as before
+        handled = call_service(msg, response);
+      }
+    } else {
+      handled = call_service(msg, response);
+    }
   }
 
   if (op == "subscribe") {
@@ -522,6 +543,102 @@ bool ClientHandler::call_external_service(const json & msg, json & response)
   response["op"] = "call_service";
   response["result"] = true;
   return true;
+}
+
+void ClientHandler::init_service_thread_pool()
+{
+  for (int i = 0; i < THREAD_POOL_SIZE; ++i) {
+    service_thread_pool_.emplace_back(&ClientHandler::service_worker_thread, this);
+  }
+}
+
+void ClientHandler::shutdown_service_thread_pool()
+{
+  shutdown_service_threads_ = true;
+  service_condition_.notify_all();
+  
+  for (auto& thread : service_thread_pool_) {
+    if (thread.joinable()) {
+      thread.join();
+    }
+  }
+}
+
+void ClientHandler::service_worker_thread()
+{
+  while (!shutdown_service_threads_) {
+    std::function<void()> task;
+    
+    {
+      std::unique_lock<std::mutex> lock(service_queue_mutex_);
+      service_condition_.wait(lock, [this] { 
+        return !service_tasks_.empty() || shutdown_service_threads_; 
+      });
+      
+      if (shutdown_service_threads_) {
+        break;
+      }
+      
+      task = std::move(service_tasks_.front());
+      service_tasks_.pop();
+    }
+    
+    try {
+      task();
+    } catch (const std::exception& e) {
+      RCLCPP_ERROR(get_logger(), "Exception in service worker thread: %s", e.what());
+    }
+  }
+}
+
+void ClientHandler::process_service_call_async(json request)
+{
+  {
+    std::lock_guard<std::mutex> lock(service_queue_mutex_);
+    service_tasks_.push([this, request]() mutable {
+      std::string service_name = request["service"];
+      std::string service_type = request["type"];
+      
+      std::map<std::string, std::vector<std::string>> services = node_->get_service_names_and_types();
+      if (services.find(service_name) == services.end()) {
+        RCLCPP_ERROR(get_logger(), "Service not found: %s", service_name.c_str());
+        return;
+      }
+      
+      if (clients_.count(service_name) == 0) {
+        clients_[service_name] = node_->create_generic_client(
+          service_name, service_type, rmw_qos_profile_services_default, nullptr);
+      }
+      
+      // This can block without affecting main message processing thread
+      while (!clients_[service_name]->wait_for_service(1s)) {
+        if (!rclcpp::ok() || shutdown_service_threads_) {
+          RCLCPP_ERROR(get_logger(), "Service call interrupted or shutting down.");
+          return;
+        }
+        RCLCPP_INFO(get_logger(), "Service %s not available, waiting again...", service_name.c_str());
+      }
+      
+      auto serialized_req = json_to_serialized_service_request(service_type, request["args"]);
+      using ServiceResponseFuture = rws::GenericClient::SharedFuture;
+      auto response_received_callback = [this, id = request["id"], service_name,
+                                         service_type](ServiceResponseFuture future) {
+        json response_json = serialized_service_response_to_json(service_type, future.get());
+        json m = {
+          {"id", id},
+          {"op", "service_response"},
+          {"service", service_name},
+          {"values", response_json},
+          {"result", true},
+        };
+        
+        std::string json_str = m.dump();
+        this->send_message(json_str);
+      };
+      clients_[service_name]->async_send_request(serialized_req, response_received_callback);
+    });
+  }
+  service_condition_.notify_one();
 }
 
 }  // namespace rws
