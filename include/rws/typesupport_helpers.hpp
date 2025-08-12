@@ -54,6 +54,18 @@ const rosidl_service_type_support_t * get_service_typesupport_handle(
   const std::string & type, const std::string & typesupport_identifier,
   rcpputils::SharedLibrary & library);
 
+/// Extract the message type support handle from the library.
+/**
+ * The library needs to match the message type. The shared library must stay loaded for the lifetime of the result.
+ * \param[in] type The message type, e.g. "std_msgs/msg/String"
+ * \param[in] typesupport_identifier Type support identifier, typically "rosidl_typesupport_introspection_cpp"
+ * \param[in] library The shared type support library
+ * \return A type support handle for the message
+ */
+const rosidl_message_type_support_t * get_message_typesupport_handle(
+  const std::string & type, const std::string & typesupport_identifier,
+  rcpputils::SharedLibrary & library);
+
 /// Get type string from a serialized message members.
 /**
  * \param[in] members The message members
