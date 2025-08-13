@@ -40,6 +40,7 @@ public:
     std::function<void(std::string & msg)> callback,
     std::function<void(std::vector<std::uint8_t> & msg)> binary_callback);
   json process_message(json & msg);
+  void set_timing_logs_enabled(bool enabled) { enable_timing_logs_ = enabled; }
 
   ~ClientHandler();
 
@@ -92,7 +93,6 @@ private:
   bool call_service(const json & request, json & response_out);
   bool call_external_service(const json & request, json & response_out);
   void process_service_call_async(json request);
-  void set_timing_logs_enabled(bool enabled) { enable_timing_logs_ = enabled; }
 };
 
 }  // namespace rws
