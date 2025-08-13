@@ -72,8 +72,13 @@ public:
     rosbridge_compatible_ = this->declare_parameter("rosbridge_compatible", true);
     port_ = this->declare_parameter("port", 9090);
     bool watchdog = this->declare_parameter("watchdog", true);
+    std::string version = this->declare_parameter("version", "1.0.0-parallel-async");
+    bool enable_timing_logs = this->declare_parameter("enable_timing_logs", false);
 
-    RCLCPP_INFO(get_logger(), "RWS start listening on port %d", port_);
+    RCLCPP_INFO(get_logger(), "RWS version %s start listening on port %d", version.c_str(), port_);
+    if (enable_timing_logs) {
+      RCLCPP_INFO(get_logger(), "Timing diagnostics enabled");
+    }
 
     if (watchdog) {
       ping_timer_ = this->create_wall_timer(
@@ -264,6 +269,10 @@ private:
         }
         action_cond_.notify_one();
       });
+    
+    // Enable timing logs if parameter is set
+    bool enable_timing_logs = this->get_parameter("enable_timing_logs").as_bool();
+    data.node->set_timing_logs_enabled(enable_timing_logs);
 
     return data;
   }

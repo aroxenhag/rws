@@ -57,6 +57,7 @@ private:
   std::map<std::string, std::function<void(std::shared_ptr<const rclcpp::SerializedMessage>)>>
     publisher_cb_;
   std::map<std::string, std::shared_ptr<rws::GenericClient>> clients_;
+  std::mutex clients_mutex_;
 
   // Thread pool for async service calls
   static const int THREAD_POOL_SIZE = 4;
@@ -65,6 +66,7 @@ private:
   std::mutex service_queue_mutex_;
   std::condition_variable service_condition_;
   std::atomic<bool> shutdown_service_threads_;
+  bool enable_timing_logs_;
 
   void init_service_thread_pool();
   void shutdown_service_thread_pool();
@@ -90,6 +92,7 @@ private:
   bool call_service(const json & request, json & response_out);
   bool call_external_service(const json & request, json & response_out);
   void process_service_call_async(json request);
+  void set_timing_logs_enabled(bool enabled) { enable_timing_logs_ = enabled; }
 };
 
 }  // namespace rws

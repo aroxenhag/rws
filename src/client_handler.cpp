@@ -46,7 +46,8 @@ ClientHandler::ClientHandler(
   rosbridge_compatible_(rosbridge_compatible),
   callback_(callback),
   binary_callback_(binary_callback),
-  shutdown_service_threads_(false)
+  shutdown_service_threads_(false),
+  enable_timing_logs_(false)
 {
   RCLCPP_INFO(
     get_logger(), "Constructing client %s(%s)", std::to_string(client_id_).c_str(),
@@ -593,37 +594,79 @@ void ClientHandler::service_worker_thread()
 
 void ClientHandler::process_service_call_async(json request)
 {
+  auto request_start = std::chrono::high_resolution_clock::now();
+  std::string request_id = request.contains("id") ? request["id"] : "no_id";
+  
+  if (enable_timing_logs_) {
+    RCLCPP_INFO(get_logger(), "[TIMING] Request %s queued for async processing", request_id.c_str());
+  }
+  
   {
     std::lock_guard<std::mutex> lock(service_queue_mutex_);
-    service_tasks_.push([this, request]() mutable {
+    service_tasks_.push([this, request, request_start, request_id]() mutable {
+      auto thread_start = std::chrono::high_resolution_clock::now();
+      auto queue_time = std::chrono::duration_cast<std::chrono::milliseconds>(thread_start - request_start).count();
+      
+      if (enable_timing_logs_) {
+        RCLCPP_INFO(get_logger(), "[TIMING] Request %s started processing after %ldms in queue", request_id.c_str(), queue_time);
+      }
+      
       std::string service_name = request["service"];
       std::string service_type = request["type"];
       
+      auto lookup_start = std::chrono::high_resolution_clock::now();
       std::map<std::string, std::vector<std::string>> services = node_->get_service_names_and_types();
       if (services.find(service_name) == services.end()) {
-        RCLCPP_ERROR(get_logger(), "Service not found: %s", service_name.c_str());
+        RCLCPP_ERROR(get_logger(), "[TIMING] Request %s: Service not found: %s", request_id.c_str(), service_name.c_str());
         return;
       }
+      auto lookup_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - lookup_start).count();
       
-      if (clients_.count(service_name) == 0) {
-        clients_[service_name] = node_->create_generic_client(
-          service_name, service_type, rmw_qos_profile_services_default, nullptr);
+      auto client_setup_start = std::chrono::high_resolution_clock::now();
+      std::shared_ptr<rws::GenericClient> client;
+      {
+        std::lock_guard<std::mutex> clients_lock(clients_mutex_);
+        if (clients_.count(service_name) == 0) {
+          clients_[service_name] = node_->create_generic_client(
+            service_name, service_type, rmw_qos_profile_services_default, nullptr);
+          if (enable_timing_logs_) {
+            RCLCPP_INFO(get_logger(), "[TIMING] Request %s: Created new client for service %s", request_id.c_str(), service_name.c_str());
+          }
+        }
+        client = clients_[service_name];
       }
+      auto client_setup_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - client_setup_start).count();
       
       // This can block without affecting main message processing thread
-      while (!clients_[service_name]->wait_for_service(1s)) {
+      auto wait_start = std::chrono::high_resolution_clock::now();
+      int wait_attempts = 0;
+      while (!client->wait_for_service(1s)) {
+        wait_attempts++;
         if (!rclcpp::ok() || shutdown_service_threads_) {
-          RCLCPP_ERROR(get_logger(), "Service call interrupted or shutting down.");
+          RCLCPP_ERROR(get_logger(), "[TIMING] Request %s: Service call interrupted or shutting down after %d attempts.", request_id.c_str(), wait_attempts);
           return;
         }
-        RCLCPP_INFO(get_logger(), "Service %s not available, waiting again...", service_name.c_str());
+        if (enable_timing_logs_) {
+          RCLCPP_INFO(get_logger(), "[TIMING] Request %s: Service %s not available, waiting again... (attempt %d)", request_id.c_str(), service_name.c_str(), wait_attempts);
+        }
+      }
+      auto wait_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - wait_start).count();
+      
+      auto serialize_start = std::chrono::high_resolution_clock::now();
+      auto serialized_req = json_to_serialized_service_request(service_type, request["args"]);
+      auto serialize_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - serialize_start).count();
+      
+      if (enable_timing_logs_) {
+        RCLCPP_INFO(get_logger(), "[TIMING] Request %s breakdown - Queue: %ldms, Lookup: %ldms, Client: %ldms, Wait: %ldms (%d attempts), Serialize: %ldms", 
+                   request_id.c_str(), queue_time, lookup_time, client_setup_time, wait_time, wait_attempts, serialize_time);
       }
       
-      auto serialized_req = json_to_serialized_service_request(service_type, request["args"]);
       using ServiceResponseFuture = rws::GenericClient::SharedFuture;
-      auto response_received_callback = [this, id = request["id"], service_name,
-                                         service_type](ServiceResponseFuture future) {
+      auto response_received_callback = [this, id = request["id"], service_name, service_type, request_start, request_id](ServiceResponseFuture future) {
+        auto response_start = std::chrono::high_resolution_clock::now();
         json response_json = serialized_service_response_to_json(service_type, future.get());
+        auto deserialize_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - response_start).count();
+        
         json m = {
           {"id", id},
           {"op", "service_response"},
@@ -633,9 +676,22 @@ void ClientHandler::process_service_call_async(json request)
         };
         
         std::string json_str = m.dump();
+        auto total_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - request_start).count();
+        
+        if (enable_timing_logs_) {
+          RCLCPP_INFO(get_logger(), "[TIMING] Request %s COMPLETE - Total time: %ldms, Deserialize: %ldms", request_id.c_str(), total_time, deserialize_time);
+        }
+        
         this->send_message(json_str);
       };
-      clients_[service_name]->async_send_request(serialized_req, response_received_callback);
+      
+      auto send_start = std::chrono::high_resolution_clock::now();
+      client->async_send_request(serialized_req, response_received_callback);
+      auto send_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - send_start).count();
+      
+      if (enable_timing_logs_) {
+        RCLCPP_INFO(get_logger(), "[TIMING] Request %s sent to ROS service (send: %ldms)", request_id.c_str(), send_time);
+      }
     });
   }
   service_condition_.notify_one();
