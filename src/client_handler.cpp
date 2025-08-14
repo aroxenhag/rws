@@ -597,18 +597,38 @@ void ClientHandler::process_service_call_async(json request)
   auto request_start = std::chrono::high_resolution_clock::now();
   std::string request_id = request.contains("id") ? request["id"] : "no_id";
   
+  // Extract trace information from the request
+  std::string trace_id = "no_trace";
+  std::string client_id = "unknown";
+  double webrtc_send_time = 0.0;
+  
+  if (request.contains("_trace")) {
+    auto trace_info = request["_trace"];
+    if (trace_info.contains("traceId")) {
+      trace_id = trace_info["traceId"];
+    }
+    if (trace_info.contains("clientId")) {
+      client_id = trace_info["clientId"];
+    }
+    if (trace_info.contains("webrtcSendTime")) {
+      webrtc_send_time = trace_info["webrtcSendTime"];
+    }
+  }
+  
   if (enable_timing_logs_) {
-    RCLCPP_INFO(get_logger(), "[TIMING] Request %s queued for async processing", request_id.c_str());
+    RCLCPP_INFO(get_logger(), "[BRIDGE] [TRACE-%s] REQUEST_RECEIVED: %s (client: %s)", 
+                trace_id.c_str(), request_id.c_str(), client_id.c_str());
   }
   
   {
     std::lock_guard<std::mutex> lock(service_queue_mutex_);
-    service_tasks_.push([this, request, request_start, request_id]() mutable {
+    service_tasks_.push([this, request, request_start, request_id, trace_id, client_id, webrtc_send_time]() mutable {
       auto thread_start = std::chrono::high_resolution_clock::now();
       auto queue_time = std::chrono::duration_cast<std::chrono::milliseconds>(thread_start - request_start).count();
       
       if (enable_timing_logs_) {
-        RCLCPP_INFO(get_logger(), "[TIMING] Request %s started processing after %ldms in queue", request_id.c_str(), queue_time);
+        RCLCPP_INFO(get_logger(), "[BRIDGE] [TRACE-%s] PROCESSING_START: %s after %ldms in queue", 
+                   trace_id.c_str(), request_id.c_str(), queue_time);
       }
       
       std::string service_name = request["service"];
@@ -617,7 +637,8 @@ void ClientHandler::process_service_call_async(json request)
       auto lookup_start = std::chrono::high_resolution_clock::now();
       std::map<std::string, std::vector<std::string>> services = node_->get_service_names_and_types();
       if (services.find(service_name) == services.end()) {
-        RCLCPP_ERROR(get_logger(), "[TIMING] Request %s: Service not found: %s", request_id.c_str(), service_name.c_str());
+        RCLCPP_ERROR(get_logger(), "[BRIDGE] [TRACE-%s] SERVICE_NOT_FOUND: %s (%s)", 
+                    trace_id.c_str(), request_id.c_str(), service_name.c_str());
         return;
       }
       auto lookup_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - lookup_start).count();
@@ -630,7 +651,8 @@ void ClientHandler::process_service_call_async(json request)
           clients_[service_name] = node_->create_generic_client(
             service_name, service_type, rmw_qos_profile_services_default, nullptr);
           if (enable_timing_logs_) {
-            RCLCPP_INFO(get_logger(), "[TIMING] Request %s: Created new client for service %s", request_id.c_str(), service_name.c_str());
+            RCLCPP_INFO(get_logger(), "[BRIDGE] [TRACE-%s] CLIENT_CREATED: %s for service %s", 
+                       trace_id.c_str(), request_id.c_str(), service_name.c_str());
           }
         }
         client = clients_[service_name];
@@ -643,11 +665,13 @@ void ClientHandler::process_service_call_async(json request)
       while (!client->wait_for_service(1s)) {
         wait_attempts++;
         if (!rclcpp::ok() || shutdown_service_threads_) {
-          RCLCPP_ERROR(get_logger(), "[TIMING] Request %s: Service call interrupted or shutting down after %d attempts.", request_id.c_str(), wait_attempts);
+          RCLCPP_ERROR(get_logger(), "[BRIDGE] [TRACE-%s] SERVICE_INTERRUPTED: %s shutting down after %d attempts.", 
+                      trace_id.c_str(), request_id.c_str(), wait_attempts);
           return;
         }
         if (enable_timing_logs_) {
-          RCLCPP_INFO(get_logger(), "[TIMING] Request %s: Service %s not available, waiting again... (attempt %d)", request_id.c_str(), service_name.c_str(), wait_attempts);
+          RCLCPP_INFO(get_logger(), "[BRIDGE] [TRACE-%s] SERVICE_WAITING: %s for %s (attempt %d)", 
+                     trace_id.c_str(), request_id.c_str(), service_name.c_str(), wait_attempts);
         }
       }
       auto wait_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - wait_start).count();
@@ -657,12 +681,12 @@ void ClientHandler::process_service_call_async(json request)
       auto serialize_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - serialize_start).count();
       
       if (enable_timing_logs_) {
-        RCLCPP_INFO(get_logger(), "[TIMING] Request %s breakdown - Queue: %ldms, Lookup: %ldms, Client: %ldms, Wait: %ldms (%d attempts), Serialize: %ldms", 
-                   request_id.c_str(), queue_time, lookup_time, client_setup_time, wait_time, wait_attempts, serialize_time);
+        RCLCPP_INFO(get_logger(), "[BRIDGE] [TRACE-%s] ROS_CALL_START: %s breakdown - Queue: %ldms, Lookup: %ldms, Client: %ldms, Wait: %ldms (%d attempts), Serialize: %ldms", 
+                   trace_id.c_str(), request_id.c_str(), queue_time, lookup_time, client_setup_time, wait_time, wait_attempts, serialize_time);
       }
       
       using ServiceResponseFuture = rws::GenericClient::SharedFuture;
-      auto response_received_callback = [this, id = request["id"], service_name, service_type, request_start, request_id](ServiceResponseFuture future) {
+      auto response_received_callback = [this, id = request["id"], service_name, service_type, request_start, request_id, trace_id, client_id, webrtc_send_time](ServiceResponseFuture future) {
         auto response_start = std::chrono::high_resolution_clock::now();
         json response_json = serialized_service_response_to_json(service_type, future.get());
         auto deserialize_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - response_start).count();
@@ -679,7 +703,22 @@ void ClientHandler::process_service_call_async(json request)
         auto total_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - request_start).count();
         
         if (enable_timing_logs_) {
-          RCLCPP_INFO(get_logger(), "[TIMING] Request %s COMPLETE - Total time: %ldms, Deserialize: %ldms", request_id.c_str(), total_time, deserialize_time);
+          auto end_to_end_time = total_time;
+          // Calculate bridge processing time (total - estimated WebRTC roundtrip if available)
+          std::string bridge_time_info = "unknown";
+          if (webrtc_send_time > 0) {
+            auto estimated_webrtc_time = (std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::high_resolution_clock::now().time_since_epoch()).count() - webrtc_send_time);
+            bridge_time_info = std::to_string(total_time) + "ms";
+          }
+          
+          RCLCPP_INFO(get_logger(), "[BRIDGE] [TRACE-%s] ROS_CALL_COMPLETE: %s - Total: %ldms, Deserialize: %ldms, Bridge processing: %s", 
+                     trace_id.c_str(), request_id.c_str(), total_time, deserialize_time, bridge_time_info.c_str());
+        }
+        
+        if (enable_timing_logs_) {
+          RCLCPP_INFO(get_logger(), "[BRIDGE] [TRACE-%s] RESPONSE_SENT: %s to client %s", 
+                     trace_id.c_str(), request_id.c_str(), client_id.c_str());
         }
         
         this->send_message(json_str);
@@ -690,7 +729,8 @@ void ClientHandler::process_service_call_async(json request)
       auto send_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - send_start).count();
       
       if (enable_timing_logs_) {
-        RCLCPP_INFO(get_logger(), "[TIMING] Request %s sent to ROS service (send: %ldms)", request_id.c_str(), send_time);
+        RCLCPP_INFO(get_logger(), "[BRIDGE] [TRACE-%s] ROS_REQUEST_SENT: %s to service %s (send: %ldms)", 
+                   trace_id.c_str(), request_id.c_str(), service_name.c_str(), send_time);
       }
     });
   }
