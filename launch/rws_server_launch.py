@@ -39,6 +39,7 @@ def generate_launch_description():
             'port': LaunchConfiguration('port'),
             'rosbridge_compatible': LaunchConfiguration('rosbridge_compatible'),
             'watchdog': LaunchConfiguration('watchdog'),
+            'enable_timing_logs': LaunchConfiguration('enable_timing_logs'),
         }]
     )
 
@@ -46,5 +47,6 @@ def generate_launch_description():
         declare_port_param,
         declare_rosbridge_compat_param,
         declare_watchgod_param,
+        declare_timing_logs_param,
         rws_server_node
     ])
