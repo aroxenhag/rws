@@ -24,6 +24,12 @@ def generate_launch_description():
         description='Use ping/pong to detect and drop unresponsive clients that keep TCP connection open'
     )
 
+    declare_timing_logs_param = DeclareLaunchArgument(
+        'enable_timing_logs',
+        default_value='False',
+        description='Enable detailed timing logs for service calls with trace ID support'
+    )
+
     rws_server_node = Node(
         package='rws',
         executable='rws_server',
