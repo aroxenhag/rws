@@ -16,12 +16,8 @@
 #define RWS__NODE_HPP_
 
 #include <nlohmann/json.hpp>
-#include <thread>
-#include <queue>
 #include <mutex>
-#include <condition_variable>
-#include <functional>
-#include <atomic>
+#include <chrono>
 
 #include "rclcpp/rclcpp.hpp"
 #include "rws/connector.hpp"
@@ -60,18 +56,16 @@ private:
   std::map<std::string, std::shared_ptr<rws::GenericClient>> clients_;
   std::mutex clients_mutex_;
 
-  // Thread pool for async service calls
-  static const int THREAD_POOL_SIZE = 4;
-  std::vector<std::thread> service_thread_pool_;
-  std::queue<std::function<void()>> service_tasks_;
-  std::mutex service_queue_mutex_;
-  std::condition_variable service_condition_;
-  std::atomic<bool> shutdown_service_threads_;
+  // Service caching for performance
+  std::map<std::string, std::vector<std::string>> service_cache_;
+  std::chrono::steady_clock::time_point service_cache_time_;
+  std::mutex service_cache_mutex_;
+  static constexpr int SERVICE_CACHE_MS = 1000; // Cache service list for 1 second
+
   bool enable_timing_logs_;
 
-  void init_service_thread_pool();
-  void shutdown_service_thread_pool();
-  void service_worker_thread();
+  bool is_service_available(const std::string& service_name);
+  void update_service_cache();
 
   rclcpp::Logger get_logger()
   {
@@ -92,7 +86,6 @@ private:
   // Service handlers
   bool call_service(const json & request, json & response_out);
   bool call_external_service(const json & request, json & response_out);
-  void process_service_call_async(json request);
 };
 
 }  // namespace rws
