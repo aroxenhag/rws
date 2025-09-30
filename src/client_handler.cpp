@@ -509,9 +509,11 @@ bool ClientHandler::call_external_service(const json & msg, json & response)
     } else {
       RCLCPP_ERROR(get_logger(), "Service not found: %s", service_name.c_str());
     }
+    response["op"] = "service_response";
+    response["service"] = service_name;
     response["result"] = false;
     response["error"] = "Service not found: " + service_name;
-    return false;
+    return true; // Request was handled, just failed
   }
   auto cache_check_time = std::chrono::duration_cast<std::chrono::microseconds>(
     std::chrono::high_resolution_clock::now() - cache_check_start).count();
@@ -546,9 +548,11 @@ bool ClientHandler::call_external_service(const json & msg, json & response)
     } else {
       RCLCPP_WARN(get_logger(), "Service not ready: %s", service_name.c_str());
     }
+    response["op"] = "service_response";
+    response["service"] = service_name;
     response["result"] = false;
     response["error"] = "Service not ready: " + service_name;
-    return false;
+    return true; // Request was handled, just failed
   }
   auto availability_time = std::chrono::duration_cast<std::chrono::microseconds>(
     std::chrono::high_resolution_clock::now() - availability_start).count();
@@ -614,8 +618,8 @@ void ClientHandler::update_service_cache()
   auto now = std::chrono::steady_clock::now();
   auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - service_cache_time_).count();
 
-  // Only update if cache is stale
-  if (elapsed > SERVICE_CACHE_MS) {
+  // Update if cache is empty (first call) or stale
+  if (service_cache_.empty() || elapsed > SERVICE_CACHE_MS) {
     service_cache_ = node_->get_service_names_and_types();
     service_cache_time_ = now;
 
