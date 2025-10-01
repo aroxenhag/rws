@@ -141,7 +141,8 @@ def analyze_message_gaps(events: List[dict]):
         print(f"Topic: {topic}")
         print(f"   Count: {len(gaps)}")
         print(f"   Duration: min={min(durations):.1f}s, max={max(durations):.1f}s, avg={sum(durations)/len(durations):.1f}s")
-        print(f"   Times: {', '.join([f'{g["time"]:.1f}s' for g in gaps[:5]])}")
+        times_str = ', '.join([f"{g['time']:.1f}s" for g in gaps[:5]])
+        print(f"   Times: {times_str}")
         if len(gaps) > 5:
             print(f"          ... and {len(gaps)-5} more")
         print()
@@ -188,7 +189,8 @@ def analyze_topic_rates(events: List[dict]):
             print(f"   Rate: min={min_rate:.1f}Hz, max={max_rate:.1f}Hz, avg={avg_rate:.1f}Hz")
 
             if low_rate_periods:
-                print(f"   ⚠️  Low rate periods: {', '.join([f'{t:.1f}s' for t in low_rate_periods[:5]])}")
+                periods_str = ', '.join([f"{t:.1f}s" for t in low_rate_periods[:5]])
+                print(f"   ⚠️  Low rate periods: {periods_str}")
             print()
 
 
