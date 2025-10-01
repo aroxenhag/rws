@@ -92,7 +92,17 @@ def discover_metering_socket_relay_topics() -> List[str]:
         return closed_topics
 
     except subprocess.TimeoutExpired:
-        print("❌ Timeout while discovering topics", file=sys.stderr)
+        print("❌ Timeout while discovering nodes", file=sys.stderr)
+        print("\n⚠️  ROS2 CLI commands are timing out. This usually means:", file=sys.stderr)
+        print("   1. ROS_LOCALHOST_ONLY environment variable mismatch", file=sys.stderr)
+        print("   2. ROS_DOMAIN_ID mismatch", file=sys.stderr)
+        print("   3. DDS discovery issues", file=sys.stderr)
+        print("\nTry running:", file=sys.stderr)
+        print("   export ROS_LOCALHOST_ONLY=1", file=sys.stderr)
+        print("   ros2 node list", file=sys.stderr)
+        print("\nCurrent environment:", file=sys.stderr)
+        print(f"   ROS_LOCALHOST_ONLY={os.environ.get('ROS_LOCALHOST_ONLY', 'not set')}", file=sys.stderr)
+        print(f"   ROS_DOMAIN_ID={os.environ.get('ROS_DOMAIN_ID', 'not set (default: 0)')}", file=sys.stderr)
         return []
     except Exception as e:
         print(f"❌ Error discovering topics: {e}", file=sys.stderr)
@@ -112,20 +122,29 @@ class ROSGraphMonitor:
         """Check for changes in ROS graph"""
         timestamp = datetime.now().isoformat()
 
-        # Get current nodes
-        result = subprocess.run(['ros2', 'node', 'list'],
-                              capture_output=True, text=True, timeout=5)
-        current_nodes = set(result.stdout.strip().split('\n')) if result.returncode == 0 else set()
+        try:
+            # Get current nodes (increase timeout, handle errors gracefully)
+            result = subprocess.run(['ros2', 'node', 'list'],
+                                  capture_output=True, text=True, timeout=10)
+            current_nodes = set(result.stdout.strip().split('\n')) if result.returncode == 0 and result.stdout.strip() else set()
 
-        # Get current topics
-        result = subprocess.run(['ros2', 'topic', 'list'],
-                              capture_output=True, text=True, timeout=5)
-        current_topics = set(result.stdout.strip().split('\n')) if result.returncode == 0 else set()
+            # Get current topics
+            result = subprocess.run(['ros2', 'topic', 'list'],
+                                  capture_output=True, text=True, timeout=10)
+            current_topics = set(result.stdout.strip().split('\n')) if result.returncode == 0 and result.stdout.strip() else set()
 
-        # Get current services
-        result = subprocess.run(['ros2', 'service', 'list'],
-                              capture_output=True, text=True, timeout=5)
-        current_services = set(result.stdout.strip().split('\n')) if result.returncode == 0 else set()
+            # Get current services
+            result = subprocess.run(['ros2', 'service', 'list'],
+                                  capture_output=True, text=True, timeout=10)
+            current_services = set(result.stdout.strip().split('\n')) if result.returncode == 0 and result.stdout.strip() else set()
+
+        except subprocess.TimeoutExpired:
+            # If ROS commands timeout, skip this update and continue
+            # This can happen if ROS_LOCALHOST_ONLY is not set or DDS discovery is slow
+            return None
+        except Exception:
+            # Any other error, skip this update
+            return None
 
         # Detect changes
         new_nodes = current_nodes - self.nodes
