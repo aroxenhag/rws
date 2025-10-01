@@ -29,6 +29,7 @@ import os
 import select
 import termios
 import tty
+import shutil
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Dict, List
@@ -64,11 +65,21 @@ class LiveMonitor:
         self.running = True
         self.last_update = time.time()
         self.output_buffer = []  # Buffer output to reduce flicker
+        self.term_width = 80  # Default width
+        self.term_height = 24  # Default height
+        self.update_terminal_size()
+
+    def update_terminal_size(self):
+        """Update terminal dimensions"""
+        try:
+            self.term_width, self.term_height = shutil.get_terminal_size(fallback=(80, 24))
+        except:
+            self.term_width, self.term_height = 80, 24
 
     def clear_screen(self):
-        """Clear terminal screen using ANSI escape codes (faster, no flicker)"""
-        # Move cursor to home position (0,0) and clear from cursor to end of screen
-        sys.stdout.write('\033[H\033[J')
+        """Clear terminal screen completely"""
+        # Clear entire screen and move to home
+        sys.stdout.write('\033[2J\033[H')
         sys.stdout.flush()
 
     def print_buffered(self, text: str = ""):
@@ -77,16 +88,18 @@ class LiveMonitor:
 
     def flush_buffer(self):
         """Write all buffered output at once to reduce flicker"""
+        # Update terminal size in case of resize
+        self.update_terminal_size()
+
         # Hide cursor during update, show after
         sys.stdout.write('\033[?25l')  # Hide cursor
 
-        # Move to home and write all content
-        sys.stdout.write('\033[H')  # Move to top-left
+        # Clear entire screen and move to home (fixes resize issues)
+        sys.stdout.write('\033[2J\033[H')
+
+        # Write all content
         output = '\n'.join(self.output_buffer)
         sys.stdout.write(output)
-
-        # Clear any remaining lines from previous render
-        sys.stdout.write('\033[J')  # Clear from cursor to end
 
         sys.stdout.write('\033[?25h')  # Show cursor
         sys.stdout.flush()
@@ -296,7 +309,7 @@ class LiveMonitor:
             return
 
         self.print_buffered("\n📊 Percentile Statistics (microseconds)")
-        self.print_buffered("=" * 90)
+        self.print_buffered("=" * self.term_width)
 
         phases = [
             ('Cache Check', data.cache_check),
@@ -330,9 +343,9 @@ class LiveMonitor:
     def render(self):
         """Render the current view"""
         # Header (clear_screen is now part of flush_buffer)
-        self.print_buffered("=" * 80)
+        self.print_buffered("=" * self.term_width)
         self.print_buffered("🚀 RWS Bridge Timing Monitor - LIVE MODE")
-        self.print_buffered("=" * 80)
+        self.print_buffered("=" * self.term_width)
 
         # Apply time window filter
         display_data = self.filter_by_time_window(self.data)
@@ -366,9 +379,9 @@ class LiveMonitor:
             self.render_percentile_view(display_data)
 
         # Controls
-        self.print_buffered("\n" + "=" * 80)
+        self.print_buffered("\n" + "=" * self.term_width)
         self.print_buffered("⌨ Controls: [1]Bar [2]Pie [3]Service [4]Percentiles [5]All | [w]Window [r]Reset [q]Quit")
-        self.print_buffered("=" * 80)
+        self.print_buffered("=" * self.term_width)
 
         # Flush all buffered output at once (reduces flicker)
         self.flush_buffer()
