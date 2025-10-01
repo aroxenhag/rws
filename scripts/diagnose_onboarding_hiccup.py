@@ -45,30 +45,49 @@ def discover_metering_socket_relay_topics() -> List[str]:
     """
     Auto-discover all metering_socket_relay 'closed' topics.
 
-    Returns list of topics like:
-    - /lab/elinstest/metering_socket_relay/closed
-    - /hostname/TEST/metering_socket_relay/closed
+    Metering socket relay nodes are named like:
+      /lab/elinstest/metering_socket_relay
+      /hostname/TEST/metering_socket_relay
+
+    They publish topics at their namespace level:
+      /lab/elinstest/closed
+      /lab/elinstest/connected
+      /lab/elinstest/power
+      etc.
+
+    We find all nodes ending with 'metering_socket_relay' and monitor their 'closed' topics.
     """
     try:
-        # Get all topics
-        result = subprocess.run(['ros2', 'topic', 'list'],
+        # Get all nodes
+        result = subprocess.run(['ros2', 'node', 'list'],
                               capture_output=True, text=True, timeout=5)
         if result.returncode != 0:
-            print("❌ Failed to list ROS topics", file=sys.stderr)
+            print("❌ Failed to list ROS nodes", file=sys.stderr)
             return []
 
-        all_topics = result.stdout.strip().split('\n')
+        all_nodes = result.stdout.strip().split('\n')
 
-        # Find topics matching pattern: */metering_socket_relay/closed
-        closed_topics = [t for t in all_topics if t.endswith('/metering_socket_relay/closed')]
+        # Find nodes ending with 'metering_socket_relay'
+        relay_nodes = [n for n in all_nodes if n.endswith('/metering_socket_relay')]
 
-        if not closed_topics:
-            print("⚠️  No metering_socket_relay/closed topics found")
-            print("    Available topics:")
-            for topic in all_topics[:10]:
-                print(f"      {topic}")
-            if len(all_topics) > 10:
-                print(f"      ... and {len(all_topics)-10} more")
+        if not relay_nodes:
+            print("⚠️  No metering_socket_relay nodes found")
+            print("    Available nodes:")
+            for node in all_nodes[:10]:
+                print(f"      {node}")
+            if len(all_nodes) > 10:
+                print(f"      ... and {len(all_nodes)-10} more")
+            return []
+
+        # Convert node names to topic paths
+        # Node: /lab/elinstest/metering_socket_relay
+        # Topic: /lab/elinstest/closed
+        closed_topics = []
+        for node in relay_nodes:
+            # Remove '/metering_socket_relay' from end, add '/closed'
+            namespace = node.rsplit('/metering_socket_relay', 1)[0]
+            closed_topic = f"{namespace}/closed"
+            closed_topics.append(closed_topic)
 
         return closed_topics
 
