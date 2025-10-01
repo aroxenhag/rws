@@ -427,6 +427,8 @@ def main():
     parser.add_argument('log_file', help='Log file to monitor')
     parser.add_argument('--refresh', '-r', type=float, default=1.0,
                         help='Refresh rate in seconds (default: 1.0)')
+    parser.add_argument('--minutes', '-m', type=int, default=None,
+                        help='Initial time window in minutes (default: all data)')
 
     args = parser.parse_args()
 
@@ -437,6 +439,8 @@ def main():
         open(args.log_file, 'a').close()
 
     monitor = LiveMonitor(args.log_file, args.refresh)
+    if args.minutes:
+        monitor.window_minutes = args.minutes
 
     try:
         monitor.run()
