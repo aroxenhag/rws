@@ -10,7 +10,10 @@ This script monitors:
 5. Timing of operations
 
 Usage:
-    # Start monitoring BEFORE onboarding
+    # Auto-discover all metering socket relay plugs
+    ./diagnose_onboarding_hiccup.py --auto-discover --output /tmp/onboarding_diag.log
+
+    # Or specify topics manually
     ./diagnose_onboarding_hiccup.py --topics /plug1/closed /plug2/closed --output /tmp/onboarding_diag.log
 
     # Then trigger onboarding in another terminal
@@ -25,6 +28,7 @@ import threading
 import json
 import sys
 import os
+import re
 from collections import defaultdict, deque
 from datetime import datetime
 from typing import Dict, List, Set
@@ -35,6 +39,45 @@ except ImportError:
     print("⚠ Warning: psutil not installed. System resource monitoring disabled.")
     print("  Install with: pip3 install psutil")
     psutil = None
+
+
+def discover_metering_socket_relay_topics() -> List[str]:
+    """
+    Auto-discover all metering_socket_relay 'closed' topics.
+
+    Returns list of topics like:
+    - /lab/elinstest/metering_socket_relay/closed
+    - /hostname/TEST/metering_socket_relay/closed
+    """
+    try:
+        # Get all topics
+        result = subprocess.run(['ros2', 'topic', 'list'],
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode != 0:
+            print("❌ Failed to list ROS topics", file=sys.stderr)
+            return []
+
+        all_topics = result.stdout.strip().split('\n')
+
+        # Find topics matching pattern: */metering_socket_relay/closed
+        closed_topics = [t for t in all_topics if t.endswith('/metering_socket_relay/closed')]
+
+        if not closed_topics:
+            print("⚠️  No metering_socket_relay/closed topics found")
+            print("    Available topics:")
+            for topic in all_topics[:10]:
+                print(f"      {topic}")
+            if len(all_topics) > 10:
+                print(f"      ... and {len(all_topics)-10} more")
+
+        return closed_topics
+
+    except subprocess.TimeoutExpired:
+        print("❌ Timeout while discovering topics", file=sys.stderr)
+        return []
+    except Exception as e:
+        print(f"❌ Error discovering topics: {e}", file=sys.stderr)
+        return []
 
 
 class ROSGraphMonitor:
@@ -364,8 +407,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
     )
-    parser.add_argument('--topics', '-t', nargs='+', required=True,
+    parser.add_argument('--topics', '-t', nargs='+',
                         help='Topics to monitor for message rate (e.g., /plug1/closed /plug2/closed)')
+    parser.add_argument('--auto-discover', '-a', action='store_true',
+                        help='Auto-discover all metering_socket_relay/closed topics')
     parser.add_argument('--output', '-o', default='/tmp/onboarding_diag.log',
                         help='Output log file (default: /tmp/onboarding_diag.log)')
     parser.add_argument('--interval', '-i', type=float, default=0.5,
@@ -373,13 +418,36 @@ def main():
 
     args = parser.parse_args()
 
+    # Determine topics to monitor
+    topics = []
+    if args.auto_discover:
+        print("🔍 Auto-discovering metering_socket_relay topics...")
+        topics = discover_metering_socket_relay_topics()
+        if not topics:
+            print("❌ No topics found. Exiting.")
+            return 1
+        print(f"✅ Found {len(topics)} plug(s):")
+        for topic in topics:
+            # Extract plug name from topic path
+            parts = topic.split('/')
+            plug_name = '/'.join(parts[:-1]) if len(parts) > 1 else topic
+            print(f"   📍 {plug_name}")
+        print()
+    elif args.topics:
+        topics = args.topics
+    else:
+        print("❌ Error: Must specify either --topics or --auto-discover", file=sys.stderr)
+        parser.print_help()
+        return 1
+
     # Clear previous log
     if os.path.exists(args.output):
         os.remove(args.output)
 
-    diagnostics = OnboardingDiagnostics(args.topics, args.output, args.interval)
+    diagnostics = OnboardingDiagnostics(topics, args.output, args.interval)
     diagnostics.start()
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

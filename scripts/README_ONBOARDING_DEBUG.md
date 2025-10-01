@@ -17,16 +17,28 @@ The gaps affect messages flowing through the RWS bridge to the web app.
 ### 1. Collect Diagnostic Data
 
 ```bash
-# Terminal 1: Start diagnostic monitoring
+# Terminal 1: Start diagnostic monitoring (auto-discover all plugs)
 cd /Users/roxenhag/emoco-dev/rws
-./scripts/diagnose_onboarding_hiccup.py \
-  --topics /plug1/closed /plug2/closed /plug3/power \
-  --output /tmp/onboarding_diag.log
+./scripts/diagnose_onboarding_hiccup.py --auto-discover
+
+# The script will find all metering_socket_relay/closed topics and monitor them
+# You should see output like:
+#   ✅ Found 3 plug(s):
+#      📍 /lab/elinstest/metering_socket_relay
+#      📍 /lab/bylgja/metering_socket_relay
+#      📍 /hostname/TEST/metering_socket_relay
 
 # Terminal 2: Trigger onboarding through your web app
 # (onboard a new plug)
 
 # Terminal 1: Stop monitoring with Ctrl+C when done
+```
+
+**Alternative - Specify topics manually:**
+```bash
+./scripts/diagnose_onboarding_hiccup.py \
+  --topics /plug1/closed /plug2/closed \
+  --output /tmp/onboarding_diag.log
 ```
 
 ### 2. Analyze Results
