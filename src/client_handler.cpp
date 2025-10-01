@@ -524,18 +524,44 @@ bool ClientHandler::call_external_service(const json & msg, json & response)
   // Create or reuse client
   auto client_setup_start = std::chrono::high_resolution_clock::now();
   std::shared_ptr<rws::GenericClient> client;
+
+  // Fast path: check if client exists (read-only, no lock needed for std::map::find)
+  // Note: This is a performance optimization - we do a potentially unsafe read first,
+  // then verify with lock if needed. The worst case is creating a duplicate client
+  // which gets immediately discarded.
+  bool needs_creation = false;
   {
     std::lock_guard<std::mutex> lock(clients_mutex_);
-    if (clients_.count(service_name) == 0) {
-      clients_[service_name] = node_->create_generic_client(
-        service_name, service_type, rmw_qos_profile_services_default, nullptr);
+    auto it = clients_.find(service_name);
+    if (it != clients_.end()) {
+      // Cache hit - fast path
+      client = it->second;
+    } else {
+      needs_creation = true;
+    }
+  }
+
+  // Create client outside of lock to reduce contention
+  if (needs_creation) {
+    auto new_client = node_->create_generic_client(
+      service_name, service_type, rmw_qos_profile_services_default, nullptr);
+
+    // Now acquire lock only to insert
+    std::lock_guard<std::mutex> lock(clients_mutex_);
+    // Double-check: another thread might have created it while we were creating ours
+    auto it = clients_.find(service_name);
+    if (it != clients_.end()) {
+      client = it->second;  // Use existing one
+    } else {
+      clients_[service_name] = new_client;
+      client = new_client;
       if (enable_timing_logs_) {
         RCLCPP_INFO(get_logger(), "[BRIDGE] [TRACE-%s] CLIENT_CREATED: %s for %s",
                     trace_id.c_str(), request_id.c_str(), service_name.c_str());
       }
     }
-    client = clients_[service_name];
   }
+
   auto client_setup_time = std::chrono::duration_cast<std::chrono::microseconds>(
     std::chrono::high_resolution_clock::now() - client_setup_start).count();
 
