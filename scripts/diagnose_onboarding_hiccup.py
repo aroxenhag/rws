@@ -289,6 +289,10 @@ class OnboardingDiagnostics:
         # Initial graph snapshot
         self.graph_monitor.update()
 
+        # Hide cursor during monitoring (reduces flicker)
+        sys.stdout.write('\033[?25l')
+        sys.stdout.flush()
+
         # Main monitoring loop
         try:
             last_graph_check = 0
@@ -327,6 +331,9 @@ class OnboardingDiagnostics:
         except KeyboardInterrupt:
             print("\n\n⏹️  Stopping diagnostics...")
         finally:
+            # Show cursor again
+            sys.stdout.write('\033[?25h')
+            sys.stdout.flush()
             self.stop()
 
     def stop(self):
@@ -348,7 +355,8 @@ class OnboardingDiagnostics:
 
     def _print_status(self, elapsed: float, rates: Dict[str, float]):
         """Print current status"""
-        status = f"\r⏱️  {elapsed:6.1f}s | "
+        # Clear the entire line, then rewrite (reduces flicker in xterm)
+        status = f"\r\033[K⏱️  {elapsed:6.1f}s | "
         for topic, rate in rates.items():
             topic_name = topic.split('/')[-1]
             status += f"{topic_name}: {rate:4.1f}Hz | "
@@ -358,7 +366,8 @@ class OnboardingDiagnostics:
             status += f"CPU: {latest['cpu_percent']:4.1f}% | "
             status += f"MEM: {latest['memory_percent']:4.1f}%"
 
-        print(status, end='', flush=True)
+        sys.stdout.write(status)
+        sys.stdout.flush()
 
     def _print_graph_change(self, change: dict, elapsed: float):
         """Print graph change event"""

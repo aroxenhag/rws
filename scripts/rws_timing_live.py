@@ -77,8 +77,18 @@ class LiveMonitor:
 
     def flush_buffer(self):
         """Write all buffered output at once to reduce flicker"""
+        # Hide cursor during update, show after
+        sys.stdout.write('\033[?25l')  # Hide cursor
+
+        # Move to home and write all content
+        sys.stdout.write('\033[H')  # Move to top-left
         output = '\n'.join(self.output_buffer)
         sys.stdout.write(output)
+
+        # Clear any remaining lines from previous render
+        sys.stdout.write('\033[J')  # Clear from cursor to end
+
+        sys.stdout.write('\033[?25h')  # Show cursor
         sys.stdout.flush()
         self.output_buffer = []
 
@@ -319,9 +329,7 @@ class LiveMonitor:
 
     def render(self):
         """Render the current view"""
-        self.clear_screen()
-
-        # Header
+        # Header (clear_screen is now part of flush_buffer)
         self.print_buffered("=" * 80)
         self.print_buffered("🚀 RWS Bridge Timing Monitor - LIVE MODE")
         self.print_buffered("=" * 80)
