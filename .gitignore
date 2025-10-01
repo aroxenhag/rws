@@ -1,2 +1,47 @@
-__pycache__
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+# ROS2 / Colcon
+build/
+install/
+log/
+*.bag
+*.db3
+
+# C++
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+*.out
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 .DS_Store
+
+# Logs and timing data
+*.log
+/tmp/
+rws_timing*.log
+
+# Test artifacts
+test_results/
+*.xml

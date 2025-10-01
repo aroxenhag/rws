@@ -16,6 +16,9 @@
 
 #include <chrono>
 #include <cstdio>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <nlohmann/json.hpp>
 
 #include "rclcpp/logger.hpp"
@@ -588,6 +591,14 @@ bool ClientHandler::call_external_service(const json & msg, json & response)
     if (enable_logs) {
       RCLCPP_INFO(this->get_logger(), "[BRIDGE] [TRACE-%s] SERVICE_RESPONSE: %s completed in %ldms [deserialize: %ldμs]",
                   trace_id.c_str(), request_id.c_str(), total_time, deserialize_time);
+
+      // Parseable timing for end-to-end service call
+      std::stringstream timing_msg;
+      timing_msg << "RWS_TIMING|trace_id=" << trace_id
+                 << "|service=" << service_name
+                 << "|deserialize_us=" << deserialize_time
+                 << "|total_e2e_ms=" << total_time;
+      this->log_timing(timing_msg.str());
     }
 
     this->send_message(json_str);
@@ -602,9 +613,22 @@ bool ClientHandler::call_external_service(const json & msg, json & response)
     std::chrono::high_resolution_clock::now() - call_start).count();
 
   if (enable_timing_logs_) {
+    // Structured log format for parsing: RWS_TIMING|phase|value_us
     RCLCPP_INFO(get_logger(), "[BRIDGE] [TRACE-%s] SERVICE_DISPATCHED: %s [total: %ldμs = cache: %ldμs + client: %ldμs + ready: %ldμs + serialize: %ldμs + send: %ldμs]",
                 trace_id.c_str(), request_id.c_str(), total_sync_time,
                 cache_check_time, client_setup_time, availability_time, serialize_time, send_time);
+
+    // Parseable timing breakdown
+    std::stringstream timing_msg;
+    timing_msg << "RWS_TIMING|trace_id=" << trace_id
+               << "|service=" << service_name
+               << "|cache_check_us=" << cache_check_time
+               << "|client_setup_us=" << client_setup_time
+               << "|ready_check_us=" << availability_time
+               << "|serialize_us=" << serialize_time
+               << "|send_us=" << send_time
+               << "|total_dispatch_us=" << total_sync_time;
+    log_timing(timing_msg.str());
   }
 
   response["op"] = "call_service";
@@ -635,6 +659,35 @@ bool ClientHandler::is_service_available(const std::string& service_name)
 
   std::lock_guard<std::mutex> lock(service_cache_mutex_);
   return service_cache_.find(service_name) != service_cache_.end();
+}
+
+void ClientHandler::log_timing(const std::string& message)
+{
+  if (!enable_timing_logs_) {
+    return;
+  }
+
+  // Always log to ROS logger
+  RCLCPP_INFO(get_logger(), "%s", message.c_str());
+
+  // Optionally log to file if configured
+  if (!timing_log_file_.empty()) {
+    std::lock_guard<std::mutex> lock(timing_log_mutex_);
+    std::ofstream logfile(timing_log_file_, std::ios::app);
+    if (logfile.is_open()) {
+      // Add timestamp
+      auto now = std::chrono::system_clock::now();
+      auto time_t_now = std::chrono::system_clock::to_time_t(now);
+      auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()) % 1000;
+
+      char timestamp[64];
+      std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", std::localtime(&time_t_now));
+
+      logfile << timestamp << "." << std::setfill('0') << std::setw(3) << ms.count()
+              << " " << message << std::endl;
+    }
+  }
 }
 
 }  // namespace rws

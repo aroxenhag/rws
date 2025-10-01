@@ -37,6 +37,7 @@ public:
     std::function<void(std::vector<std::uint8_t> & msg)> binary_callback);
   json process_message(json & msg);
   void set_timing_logs_enabled(bool enabled) { enable_timing_logs_ = enabled; }
+  void set_timing_log_file(const std::string& file) { timing_log_file_ = file; }
 
   ~ClientHandler();
 
@@ -63,9 +64,12 @@ private:
   static constexpr int SERVICE_CACHE_MS = 1000; // Cache service list for 1 second
 
   bool enable_timing_logs_;
+  std::string timing_log_file_;
+  std::mutex timing_log_mutex_;
 
   bool is_service_available(const std::string& service_name);
   void update_service_cache();
+  void log_timing(const std::string& message);
 
   rclcpp::Logger get_logger()
   {

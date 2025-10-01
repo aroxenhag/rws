@@ -74,10 +74,14 @@ public:
     bool watchdog = this->declare_parameter("watchdog", true);
     std::string version = this->declare_parameter("version", "1.0.0-parallel-async");
     bool enable_timing_logs = this->declare_parameter("enable_timing_logs", false);
+    std::string timing_log_file = this->declare_parameter("timing_log_file", "");
 
     RCLCPP_INFO(get_logger(), "RWS version %s start listening on port %d", version.c_str(), port_);
     if (enable_timing_logs) {
       RCLCPP_INFO(get_logger(), "Timing diagnostics enabled");
+      if (!timing_log_file.empty()) {
+        RCLCPP_INFO(get_logger(), "Timing logs writing to: %s", timing_log_file.c_str());
+      }
     }
 
     if (watchdog) {
@@ -273,6 +277,12 @@ private:
     // Enable timing logs if parameter is set
     bool enable_timing_logs = this->get_parameter("enable_timing_logs").as_bool();
     data.node->set_timing_logs_enabled(enable_timing_logs);
+
+    // Set timing log file if configured
+    std::string timing_log_file = this->get_parameter("timing_log_file").as_string();
+    if (!timing_log_file.empty()) {
+      data.node->set_timing_log_file(timing_log_file);
+    }
 
     return data;
   }

@@ -152,6 +152,15 @@ if(BUILD_TESTING)
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/test/mocks>
     $<INSTALL_INTERFACE:include>)
   target_link_libraries(client_handler_test CycloneDDS::ddsc nlohmann_json::nlohmann_json)
+
+  # async_behavior_test - tests that service calls don't block topic messages
+  ament_add_gmock(async_behavior_test
+    test/async_behavior_test.cpp
+  )
+  ament_target_dependencies(async_behavior_test ${DEPENDENCIES})
+  target_include_directories(async_behavior_test PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
 endif()
 
 ament_package()

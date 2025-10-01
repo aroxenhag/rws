@@ -30,6 +30,12 @@ def generate_launch_description():
         description='Enable detailed timing logs for service calls with trace ID support'
     )
 
+    declare_timing_log_file_param = DeclareLaunchArgument(
+        'timing_log_file',
+        default_value='',
+        description='Optional file path to write timing logs to (in addition to ROS logger)'
+    )
+
     rws_server_node = Node(
         package='rws',
         executable='rws_server',
@@ -40,6 +46,7 @@ def generate_launch_description():
             'rosbridge_compatible': LaunchConfiguration('rosbridge_compatible'),
             'watchdog': LaunchConfiguration('watchdog'),
             'enable_timing_logs': LaunchConfiguration('enable_timing_logs'),
+            'timing_log_file': LaunchConfiguration('timing_log_file'),
         }]
     )
 
@@ -48,5 +55,6 @@ def generate_launch_description():
         declare_rosbridge_compat_param,
         declare_watchgod_param,
         declare_timing_logs_param,
+        declare_timing_log_file_param,
         rws_server_node
     ])
