@@ -67,6 +67,7 @@ class LiveMonitor:
         self.output_buffer = []  # Buffer output to reduce flicker
         self.term_width = 80  # Default width
         self.term_height = 24  # Default height
+        self.scroll_offset = 0  # For scrolling service list
         self.update_terminal_size()
 
     def update_terminal_size(self):
@@ -279,7 +280,7 @@ class LiveMonitor:
             self.print_buffered(f"📈 Service Calls: {len(data.total_dispatch)}")
 
     def render_service_view(self, data: TimingData):
-        """Render service breakdown view"""
+        """Render service breakdown view with scrolling"""
         if not data.services or not data.total_dispatch:
             self.print_buffered("\n⚠ No service data available yet...")
             return
@@ -289,18 +290,46 @@ class LiveMonitor:
             if i < len(data.total_dispatch):
                 service_times[service].append(data.total_dispatch[i])
 
-        service_avgs = {
-            service: statistics.mean(times)
-            for service, times in service_times.items()
-        }
+        # Sort services by call count
+        sorted_services = sorted(service_times.keys(),
+                                key=lambda s: len(service_times[s]), reverse=True)
 
-        self.draw_bar_chart(service_avgs, "🎯 Average Dispatch Time by Service")
+        self.print_buffered("\n📞 Service Call Statistics")
+        self.print_buffered("=" * self.term_width)
 
-        self.print_buffered("\n📞 Call Counts:")
-        for service in sorted(service_times.keys(), key=lambda s: len(service_times[s]), reverse=True)[:10]:
-            count = len(service_times[service])
-            avg = statistics.mean(service_times[service])
-            self.print_buffered(f"  {service:45s} {count:6d} calls  (avg: {avg:7.1f}μs)")
+        # Calculate available height for scrolling (reserve space for header/footer)
+        # Header (4 lines) + Status (3 lines) + Controls (3 lines) + Title (2 lines) = 12 lines
+        available_height = max(5, self.term_height - 15)
+
+        total_services = len(sorted_services)
+        max_offset = max(0, total_services - available_height)
+
+        # Clamp scroll offset
+        self.scroll_offset = max(0, min(self.scroll_offset, max_offset))
+
+        # Header
+        self.print_buffered(f"{'Service':<50s} {'Calls':>8s} {'Avg':>10s} {'P95':>10s}")
+        self.print_buffered("-" * min(80, self.term_width))
+
+        # Show scrollable list
+        visible_services = sorted_services[self.scroll_offset:self.scroll_offset + available_height]
+
+        for service in visible_services:
+            times = service_times[service]
+            count = len(times)
+            avg = statistics.mean(times)
+            p95 = sorted(times)[int(len(times) * 0.95)] if len(times) > 1 else avg
+
+            # Truncate long service names
+            display_name = service[:47] + "..." if len(service) > 50 else service
+            self.print_buffered(f"{display_name:<50s} {count:8d} {avg:8.1f}μs {p95:8.1f}μs")
+
+        # Scrolling indicator
+        if total_services > available_height:
+            showing_start = self.scroll_offset + 1
+            showing_end = min(self.scroll_offset + available_height, total_services)
+            self.print_buffered("-" * min(80, self.term_width))
+            self.print_buffered(f"Showing {showing_start}-{showing_end} of {total_services} services (↑↓ to scroll)")
 
     def render_percentile_view(self, data: TimingData):
         """Render percentile statistics"""
@@ -350,7 +379,7 @@ class LiveMonitor:
         # Apply time window filter
         display_data = self.filter_by_time_window(self.data)
 
-        # Window indicator
+        # Window indicator with debug info
         window_str = f"{self.time_window}min" if self.time_window else "All time"
         view_name = {
             'bar': 'Bar Chart',
@@ -360,8 +389,13 @@ class LiveMonitor:
             'all': 'All Views'
         }.get(self.view_mode, 'Unknown')
 
+        # Show data counts for debugging
+        total_count = len(self.data.total_dispatch)
+        filtered_count = len(display_data.total_dispatch)
+        data_info = f"({filtered_count}/{total_count} calls)" if self.time_window else f"({total_count} calls)"
+
         self.print_buffered(f"📁 File: {self.log_file}")
-        self.print_buffered(f"🔄 Refresh: {self.refresh_rate}s | 📊 View: {view_name} | ⏰ Window: {window_str}")
+        self.print_buffered(f"🔄 Refresh: {self.refresh_rate}s | 📊 View: {view_name} | ⏰ Window: {window_str} {data_info}")
         self.print_buffered(f"⏱ Last update: {time.strftime('%H:%M:%S', time.localtime(self.last_update))}")
 
         # Render based on view mode
@@ -380,7 +414,7 @@ class LiveMonitor:
 
         # Controls
         self.print_buffered("\n" + "=" * self.term_width)
-        self.print_buffered("⌨ Controls: [1]Bar [2]Pie [3]Service [4]Percentiles [5]All | [w]Window [r]Reset [q]Quit")
+        self.print_buffered("⌨ Controls: [1-5]Views | [w]Window | [↑↓]Scroll | [←→]Page | [r]Reset | [q]Quit")
         self.print_buffered("=" * self.term_width)
 
         # Flush all buffered output at once (reduces flicker)
@@ -395,14 +429,19 @@ class LiveMonitor:
                 self.running = False
             elif key == '1':
                 self.view_mode = 'bar'
+                self.scroll_offset = 0
             elif key == '2':
                 self.view_mode = 'pie'
+                self.scroll_offset = 0
             elif key == '3':
                 self.view_mode = 'service'
+                self.scroll_offset = 0
             elif key == '4':
                 self.view_mode = 'percentiles'
+                self.scroll_offset = 0
             elif key == '5':
                 self.view_mode = 'all'
+                self.scroll_offset = 0
             elif key == 'w':
                 # Cycle through time windows
                 windows = [None, 1, 5, 10, 30]
@@ -412,6 +451,18 @@ class LiveMonitor:
                 # Reset data
                 self.data = TimingData()
                 self.file_position = 0
+                self.scroll_offset = 0
+            elif key == '\x1b':  # Escape sequence (arrow keys)
+                # Read the next two characters for arrow keys
+                next_chars = sys.stdin.read(2)
+                if next_chars == '[A':  # Up arrow
+                    self.scroll_offset = max(0, self.scroll_offset - 1)
+                elif next_chars == '[B':  # Down arrow
+                    self.scroll_offset += 1
+                elif next_chars == '[C':  # Right arrow (optional: page down)
+                    self.scroll_offset += 10
+                elif next_chars == '[D':  # Left arrow (optional: page up)
+                    self.scroll_offset = max(0, self.scroll_offset - 10)
 
     def run(self):
         """Main loop"""
@@ -419,6 +470,10 @@ class LiveMonitor:
         old_settings = termios.tcgetattr(sys.stdin)
         try:
             tty.setcbreak(sys.stdin.fileno())
+
+            # Enable application cursor key mode (prevents xterm.js from scrolling)
+            sys.stdout.write('\x1b[?1h')
+            sys.stdout.flush()
 
             while self.running:
                 self.update_data()
@@ -433,6 +488,10 @@ class LiveMonitor:
                     sleep_time += 0.1
 
         finally:
+            # Disable application cursor key mode
+            sys.stdout.write('\x1b[?1l')
+            sys.stdout.flush()
+
             # Restore terminal settings
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
