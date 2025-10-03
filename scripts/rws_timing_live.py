@@ -414,7 +414,7 @@ class LiveMonitor:
 
         # Controls
         self.print_buffered("\n" + "=" * self.term_width)
-        self.print_buffered("⌨ Controls: [1-5]Views | [w]Window | [↑↓]Scroll | [←→]Page | [r]Reset | [q]Quit")
+        self.print_buffered("⌨ Controls: [1-5]Views | [w]Window | [j/k]Scroll | [J/K]Page | [r]Reset | [q]Quit")
         self.print_buffered("=" * self.term_width)
 
         # Flush all buffered output at once (reduces flicker)
@@ -452,17 +452,42 @@ class LiveMonitor:
                 self.data = TimingData()
                 self.file_position = 0
                 self.scroll_offset = 0
+            elif key == 'j':  # Vim-style: scroll down one line
+                self.scroll_offset += 1
+            elif key == 'k':  # Vim-style: scroll up one line
+                self.scroll_offset = max(0, self.scroll_offset - 1)
+            elif key == 'J':  # Scroll down one page
+                self.scroll_offset += 10
+            elif key == 'K':  # Scroll up one page
+                self.scroll_offset = max(0, self.scroll_offset - 10)
             elif key == '\x1b':  # Escape sequence (arrow keys)
-                # Read the next two characters for arrow keys
-                next_chars = sys.stdin.read(2)
-                if next_chars == '[A':  # Up arrow
-                    self.scroll_offset = max(0, self.scroll_offset - 1)
-                elif next_chars == '[B':  # Down arrow
-                    self.scroll_offset += 1
-                elif next_chars == '[C':  # Right arrow (optional: page down)
-                    self.scroll_offset += 10
-                elif next_chars == '[D':  # Left arrow (optional: page up)
-                    self.scroll_offset = max(0, self.scroll_offset - 10)
+                # Peek at next character to determine sequence length
+                if sys.stdin in select.select([sys.stdin], [], [], 0.01)[0]:
+                    next_char = sys.stdin.read(1)
+                    if next_char == '[':
+                        # Standard escape sequence
+                        if sys.stdin in select.select([sys.stdin], [], [], 0.01)[0]:
+                            arrow_key = sys.stdin.read(1)
+                            if arrow_key == 'A':  # Up arrow
+                                self.scroll_offset = max(0, self.scroll_offset - 1)
+                            elif arrow_key == 'B':  # Down arrow
+                                self.scroll_offset += 1
+                            elif arrow_key == 'C':  # Right arrow (page down)
+                                self.scroll_offset += 10
+                            elif arrow_key == 'D':  # Left arrow (page up)
+                                self.scroll_offset = max(0, self.scroll_offset - 10)
+                    elif next_char == 'O':
+                        # Application mode escape sequence (used by some terminals)
+                        if sys.stdin in select.select([sys.stdin], [], [], 0.01)[0]:
+                            arrow_key = sys.stdin.read(1)
+                            if arrow_key == 'A':  # Up arrow
+                                self.scroll_offset = max(0, self.scroll_offset - 1)
+                            elif arrow_key == 'B':  # Down arrow
+                                self.scroll_offset += 1
+                            elif arrow_key == 'C':  # Right arrow
+                                self.scroll_offset += 10
+                            elif arrow_key == 'D':  # Left arrow
+                                self.scroll_offset = max(0, self.scroll_offset - 10)
 
     def run(self):
         """Main loop"""
@@ -520,7 +545,7 @@ def main():
 
     monitor = LiveMonitor(args.log_file, args.refresh)
     if args.minutes:
-        monitor.window_minutes = args.minutes
+        monitor.time_window = args.minutes
 
     try:
         monitor.run()
